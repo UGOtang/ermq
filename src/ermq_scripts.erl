@@ -17,7 +17,7 @@
 -export([run/4]).
 -export([load_command/2]).
 
--include("include/ermq.hrl").
+-include("ermq.hrl").
 
 -define(ETS_TABLE, ermq_scripts_cache).
 

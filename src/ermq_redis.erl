@@ -12,7 +12,7 @@
 -export([command/2, pipeline/2]).
 -export([q/2, qp/2]). %% Aliases for convenience
 
--include("include/ermq.hrl").
+-include("ermq.hrl").
 
 %%%===================================================================
 %%% API Functions

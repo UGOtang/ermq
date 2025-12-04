@@ -10,7 +10,7 @@
 -export([new_queue_opts/1, new_worker_opts/1]).
 -export([get_redis_opts/1]).
 
--include("include/ermq.hrl").
+-include("ermq.hrl").
 
 %%%===================================================================
 %%% API Functions
