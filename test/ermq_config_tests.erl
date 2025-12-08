@@ -1,8 +1,8 @@
 -module(ermq_config_tests).
 -include_lib("eunit/include/eunit.hrl").
--include("ermq.hrl").
+-include_lib("ermq/include/ermq.hrl").
 
-%% @doc 测试队列配置的默认值合并
+%% 测试队列配置的默认值合并
 new_queue_opts_test() ->
     %% 情况1: 空配置
     Opts = ermq_config:new_queue_opts(#{}),
@@ -15,7 +15,7 @@ new_queue_opts_test() ->
     ?assertEqual(<<"my-queue">>, maps:get(prefix, Merged)),
     ?assertEqual("redis", maps:get(host, maps:get(connection, Merged))).
 
-%% @doc 测试 Worker 配置的默认值合并
+%% 测试 Worker 配置的默认值合并
 new_worker_opts_test() ->
     Opts = ermq_config:new_worker_opts(#{}),
     %% 验证 concurrency 默认值是否为 1
@@ -23,7 +23,7 @@ new_worker_opts_test() ->
     %% 验证锁时间
     ?assertEqual(30000, maps:get(lockDuration, Opts)).
 
-%% @doc 测试从配置中提取 eredis 需要的参数
+%% 测试从配置中提取 eredis 需要的参数
 get_redis_opts_test() ->
     %% 默认情况
     {Host, Port, DB, _Pass} = ermq_config:get_redis_opts(#{}), %% 使用 _Pass 忽略

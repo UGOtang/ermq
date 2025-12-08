@@ -1,0 +1,72 @@
+{
+  "apps": [
+    {
+      "name": "ermq",
+      "dir": "",
+      "src_dirs": [
+        "src"
+      ],
+      "ebin": "_build/test/lib/ermq/ebin",
+      "extra_src_dirs": [
+        "test"
+      ],
+      "include_dirs": [
+        "include",
+        "src",
+        "test",
+        ""
+      ],
+      "macros": {
+        "TEST": "true"
+      }
+    },
+    {
+      "name": "msgpack",
+      "dir": "_build/default/lib/msgpack",
+      "src_dirs": [
+        "src"
+      ],
+      "ebin": "ebin",
+      "extra_src_dirs": [],
+      "include_dirs": [
+        "include",
+        "src",
+        ""
+      ],
+      "macros": {}
+    },
+    {
+      "name": "jsone",
+      "dir": "_build/default/lib/jsone",
+      "src_dirs": [
+        "src"
+      ],
+      "ebin": "ebin",
+      "extra_src_dirs": [],
+      "include_dirs": [
+        "include",
+        "src",
+        ""
+      ],
+      "macros": {}
+    },
+    {
+      "name": "eredis",
+      "dir": "_build/default/lib/eredis",
+      "src_dirs": [
+        "src"
+      ],
+      "ebin": "ebin",
+      "extra_src_dirs": [],
+      "include_dirs": [
+        "include",
+        "src",
+        ""
+      ],
+      "macros": {
+        "namespaced_types": "true"
+      }
+    }
+  ],
+  "deps": []
+}

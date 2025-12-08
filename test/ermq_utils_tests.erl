@@ -1,7 +1,7 @@
 -module(ermq_utils_tests).
 -include_lib("eunit/include/eunit.hrl").
 
-%% @doc 测试 UUID 生成格式
+%% 测试 UUID 生成格式
 uuid_test() ->
     UUID = ermq_utils:v4(),
     %% 检查是否为二进制
@@ -12,7 +12,7 @@ uuid_test() ->
     ?assertEqual($-, binary:at(UUID, 8)),
     ?assertEqual($-, binary:at(UUID, 13)).
 
-%% @doc 测试 Redis Key 拼接
+%% 测试 Redis Key 拼接
 to_key_test() ->
     Prefix = <<"bull">>,
     %% 测试单一部分拼接
@@ -22,7 +22,7 @@ to_key_test() ->
     %% 测试包含 binary 的拼接
     ?assertEqual(<<"bull:test:job">>, ermq_utils:to_key(Prefix, [<<"test">>, "job"])).
 
-%% @doc 测试 JSON 编解码
+%% 测试 JSON 编解码
 json_test() ->
     Map = #{<<"key">> => <<"value">>, <<"num">> => 123},
     Encoded = ermq_utils:json_encode(Map),
@@ -31,7 +31,7 @@ json_test() ->
     Decoded = ermq_utils:json_decode(Encoded),
     ?assertEqual(Map, Decoded).
 
-%% @doc 测试空值检查
+%% 测试空值检查
 is_empty_test() ->
     ?assert(ermq_utils:is_empty(undefined)),
     ?assert(ermq_utils:is_empty(null)),

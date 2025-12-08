@@ -1,23 +1,17 @@
 %%%-------------------------------------------------------------------
-%%% @doc
 %%% Lua scripts manager for Ermq.
 %%% Handles loading of Lua scripts into Redis, caching SHA digests,
 %%% and executing them atomically.
 %%%
 %%% Features:
 %%% 1. Caches SHA digests in ETS.
-%%% 2. Recursively resolves "<% include('...') %>" directives common in BullMQ scripts.
+%%% 2. Recursively resolves "--- @include" directives.
 %%% 3. Auto-reloads scripts on NOSCRIPT errors.
-%%% @end
 %%%-------------------------------------------------------------------
 -module(ermq_scripts).
 
 %% API
--export([init/0]).
--export([run/4]).
--export([load_command/2]).
-
--include("ermq.hrl").
+-export([init/0, run/4, load_command/2]).
 
 -define(ETS_TABLE, ermq_scripts_cache).
 
@@ -25,25 +19,13 @@
 %%% API Functions
 %%%===================================================================
 
-%% @doc
-%% Initializes the ETS table. Call this in your application startup.
+%% Initializes the ETS table. Call this during app startup.
 init() ->
-    try
-        ets:new(?ETS_TABLE, [set, public, named_table, {read_concurrency, true}])
-    catch
-        error:badarg -> ok
-    end,
+    try ets:new(?ETS_TABLE, [set, public, named_table, {read_concurrency, true}])
+    catch error:badarg -> ok end,
     ok.
 
-%% @doc
-%% Executes a Lua script by its specific filename (without .lua extension).
-%%
-%% Example: ermq_scripts:run(Client, 'addStandardJob-9', [Key1], [Arg1]).
-%%
-%% @param Client: The Redis connection pid.
-%% @param ScriptName: The atom name of the script file (e.g., 'addStandardJob-9').
-%% @param Keys: List of Redis keys.
-%% @param Args: List of script arguments.
+%% Executes a script. Tries cached SHA first, then loads if missing.
 run(Client, ScriptName, Keys, Args) ->
     case get_sha(ScriptName) of
         undefined ->
@@ -55,8 +37,7 @@ run(Client, ScriptName, Keys, Args) ->
             eval_sha(Client, ScriptName, Sha, Keys, Args)
     end.
 
-%% @doc
-%% Reads a script from priv/lua, processes includes, and loads it into Redis.
+%% Reads script from file, processes includes, loads into Redis.
 load_command(Client, ScriptName) when is_atom(ScriptName) ->
     Filename = atom_to_list(ScriptName) ++ ".lua",
     case read_and_process_script(Filename) of
@@ -66,6 +47,7 @@ load_command(Client, ScriptName) when is_atom(ScriptName) ->
                     cache_sha(ScriptName, Sha),
                     {ok, Sha};
                 {error, Reason} ->
+                    logger:error("Script Load Error for ~p: ~p", [ScriptName, Reason]),
                     {error, {script_load_error, Reason}}
             end;
         {error, Reason} ->
@@ -79,102 +61,108 @@ load_command(Client, ScriptName) when is_atom(ScriptName) ->
 eval_sha(Client, ScriptName, Sha, Keys, Args) ->
     NumKeys = integer_to_list(length(Keys)),
     Cmd = ["EVALSHA", Sha, NumKeys] ++ Keys ++ Args,
-    
     case ermq_redis:q(Client, Cmd) of
-        {ok, Result} ->
-            {ok, Result};
+        {ok, Res} -> {ok, Res};
         {error, <<"NOSCRIPT", _/binary>>} ->
-            %% Redis lost the script, reload and retry once
+            %% Redis lost the script (restart/flush). Reload and retry.
             case load_command(Client, ScriptName) of
                 {ok, NewSha} ->
                     NewCmd = ["EVALSHA", NewSha, NumKeys] ++ Keys ++ Args,
                     ermq_redis:q(Client, NewCmd);
-                Error ->
-                    Error
+                Err -> Err
             end;
-        {error, Reason} ->
-            {error, Reason}
+        Err -> Err
     end.
 
-get_sha(ScriptName) ->
-    case ets:lookup(?ETS_TABLE, ScriptName) of
-        [{ScriptName, Sha}] -> Sha;
-        [] -> undefined
+get_sha(Script) ->
+    case ets:lookup(?ETS_TABLE, Script) of
+        [{Script, Sha}] -> Sha; [] -> undefined
     end.
 
-cache_sha(ScriptName, Sha) ->
-    ets:insert(?ETS_TABLE, {ScriptName, Sha}).
+cache_sha(Script, Sha) -> ets:insert(?ETS_TABLE, {Script, Sha}).
 
 %%--------------------------------------------------------------------
-%% Script Pre-processing (Handling Includes)
+%% Script Pre-processing
 %%--------------------------------------------------------------------
 
-%% @private
-%% Reads the file and recursively resolves includes.
 read_and_process_script(Filename) ->
-    case get_priv_path(Filename) of
+    case find_script_path(Filename) of
         {ok, Path} ->
             case file:read_file(Path) of
                 {ok, Binary} ->
                     Content = binary_to_list(Binary),
-                    Processed = process_includes(Content),
-                    {ok, list_to_binary(Processed)};
-                Error -> Error
+                    try
+                        Processed = process_includes(Content),
+                        {ok, list_to_binary(Processed)}
+                    catch throw:Err -> {error, Err} end;
+                {error, R} -> {error, R}
             end;
-        Error -> Error
+        E -> E
     end.
 
-%% @private
-%% Locates the file in priv/lua/
-get_priv_path(Filename) ->
+%% Locates the file in priv/lua or priv/lua/includes.
+find_script_path(Filename) ->
     case code:priv_dir(ermq) of
-        {error, bad_name} ->
-            %% Fallback for development if app not started properly
-            {error, {app_not_started, "Make sure ermq application is started or path is correct"}};
+        {error, _} -> {error, {app_not_started, "ermq app not started"}};
         PrivDir ->
-            {ok, filename:join([PrivDir, "lua", Filename])}
+            %% 1. Try direct path: priv/lua/<Filename>
+            PathRoot = filename:join([PrivDir, "lua", Filename]),
+            case filelib:is_file(PathRoot) of
+                true -> {ok, PathRoot};
+                false ->
+                    %% 2. Fallback: Try priv/lua/includes/<Filename>
+                    PathIncludes = filename:join([PrivDir, "lua", "includes", Filename]),
+                    case filelib:is_file(PathIncludes) of
+                        true -> {ok, PathIncludes};
+                        false -> {error, enoent} 
+                    end
+            end
     end.
 
-%% @private
-%% Replaces "<% include('path') %>" with file content recursively.
-%% BullMQ scripts use the format: <% include('includes/utils') %>
 process_includes(Content) ->
-    %% Regex to find: <% include('...') %>
-    %% We capture the path inside the single quotes.
-    Regex = "<%\\s*include\\('([^']*)'\\)\\s*%>",
+    %% Regex: --- @include "path/to/file"
+    Regex = "--- @include \"([^\"]+)\"",
     
-    case re:run(Content, Regex, [global, {capture, [1], list}]) of
+    case re:run(Content, Regex, [global, {capture, all, list}]) of
         nomatch ->
-            Content;
+            process_includes_old(Content);
         {match, Matches} ->
-            %% Matches is a list of lists: [["includes/utils"], ["includes/destructure"]]
-            replace_includes(Content, Matches)
+            replace_includes(Content, Matches, Regex)
     end.
 
-replace_includes(Content, []) ->
-    Content;
-replace_includes(Content, [Match | _]) ->
-    [IncludePath] = Match,
-    %% IncludePath comes as "includes/utils". 
-    %% We need to ensure it has .lua extension if missing.
-    FullIncludeName = ensure_extension(IncludePath),
+process_includes_old(Content) ->
+    %% Regex: <% include('path') %>
+    Regex = "<%\\s*include\\((?:'([^']*)'|\"([^\"]*)\")\\)\\s*%>",
+    case re:run(Content, Regex, [global, {capture, all, list}]) of
+        nomatch -> Content;
+        {match, Matches} -> replace_includes(Content, Matches, Regex)
+    end.
+
+replace_includes(Content, [], _) -> Content;
+replace_includes(Content, [Match | _], Regex) ->
+    [FullMatch | Captures] = Match,
+    Path = pick_path(Captures),
+    FullIncludeName = ensure_extension(Path),
     
     Replacement = case read_and_process_script(FullIncludeName) of
         {ok, IncBin} -> binary_to_list(IncBin);
-        _ -> "" %% Fail silently or log error? BullMQ usually assumes existence.
+        {error, R} -> 
+            logger:error("Missing include: ~p (~p)", [FullIncludeName, R]),
+            throw({missing_include, FullIncludeName, R})
     end,
     
-    %% Reconstruct the pattern to replace
-    Pattern = "<%\\s*include\\('" ++ IncludePath ++ "'\\)\\s*%>",
+    IoData = string:replace(Content, FullMatch, Replacement),
+    NewContent = unicode:characters_to_list(IoData),
     
-    %% Replace first occurrence (since we iterate matches)
-    %% Note: efficient replacement in lists is tricky, using re:replace is easier but returns binary
-    NewContent = re:replace(Content, Pattern, Replacement, [{return, list}]),
-    
-    %% Recurse in case the included file ALSO has includes (unlikely in BullMQ but possible)
-    %% Warning: Current simple recursion re-scans the whole file. 
-    %% For BullMQ depth, this is acceptable.
-    process_includes(NewContent).
+    %% Recurse to handle nested includes
+    case Regex of
+        "--- @include" ++ _ -> process_includes(NewContent);
+        _ -> process_includes_old(NewContent)
+    end.
+
+pick_path([P]) -> P;
+pick_path([P, []]) -> P;
+pick_path([[], P]) -> P.
 
 ensure_extension(Path) ->
     case filename:extension(Path) of
