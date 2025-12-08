@@ -2,7 +2,7 @@
 %%% Job definition and manipulation module.
 %%% Corresponds to src/classes/job.ts.
 %%% Handles Job creation, adding to Redis via Lua scripts, and retrieval.
-%%% Uses MessagePack for Lua script arguments.
+%%% Uses internal ermq_msgpack for Lua script arguments.
 %%%-------------------------------------------------------------------
 -module(ermq_job).
 
@@ -18,7 +18,6 @@
 %%%===================================================================
 
 %% Adds a new job to the queue.
-%% Args: Client, Prefix, QueueName, Name, Data, Opts
 add(Client, Prefix, QueueName, Name, Data, Opts) ->
     JobOpts = maps:merge(?DEFAULT_JOB_OPTS, Opts),
     
@@ -34,8 +33,9 @@ add(Client, Prefix, QueueName, Name, Data, Opts) ->
     
     %% Prepare Data and Opts
     JsonData = ermq_utils:json_encode(Data),
-    %% Note: Scripts expect Opts to be msgpacked, not JSON.
-    PackedOpts = pack_args(JobOpts),
+    
+    %% Use internal msgpack encoder
+    PackedOpts = ermq_msgpack:pack(JobOpts),
     
     {ScriptName, Keys, Args} = prepare_add_script(
         Prefix, QueueName, JobId, Name, Timestamp, Delay, Priority, PackedOpts, JsonData
@@ -100,8 +100,7 @@ prepare_add_script(Prefix, _QueueName, JobId, Name, Timestamp, Delay, Priority, 
     ],
     
     %% MsgPack Arguments Construction
-    %% Structure based on 'destructure.lua':
-    %% [prefix, customId, name, timestamp, parentKey, parentDepKey, parent, repeatJobKey, deduplicationKey]
+    %% Use 'nil' which ermq_msgpack converts to 0xC0
     ArgList = [
         Prefix,
         JobId,
@@ -114,7 +113,7 @@ prepare_add_script(Prefix, _QueueName, JobId, Name, Timestamp, Delay, Priority, 
         nil  %% deduplicationKey
     ],
     
-    PackedArgs = pack_args(ArgList),
+    PackedArgs = ermq_msgpack:pack(ArgList),
     
     %% Final Args to Redis: [PackedArgs, JsonData, PackedOpts]
     FinalArgs = [PackedArgs, JsonData, PackedOpts],
@@ -128,17 +127,6 @@ prepare_add_script(Prefix, _QueueName, JobId, Name, Timestamp, Delay, Priority, 
 
         true ->
             {'addStandardJob-9', BaseKeys, FinalArgs}
-    end.
-
-%% Helper wrapper for msgpack:pack using apply/3.
-%% This helps bypass strict static type checking (eqwalize) regarding 'nil' atoms
-%% and ensures proper return types.
--spec pack_args(term()) -> binary().
-pack_args(Term) ->
-    case apply(msgpack, pack, [Term]) of
-        Bin when is_binary(Bin) -> Bin;
-        {error, Reason} -> error({msgpack_pack_error, Reason});
-        Other -> error({msgpack_unexpected_return, Other})
     end.
 
 list_to_map(List) -> list_to_map(List, #{}).

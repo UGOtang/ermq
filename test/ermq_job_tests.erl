@@ -52,7 +52,6 @@ cleanup_test_data(Client) ->
 
 %% Test adding a standard job
 test_add_standard_job(Client) ->
-    %% r3:break(), % Debug breakpoint removed/commented for compilation safety
     Data = #{<<"foo">> => <<"bar">>},
     Result = ermq_job:add(Client, ?TEST_PREFIX, ?TEST_QUEUE, <<"standard-job">>, Data),
     ?assertMatch({ok, _}, Result),
